@@ -21,6 +21,11 @@ As an addition to compress single files you can also compress all images inside 
 Select a folder and press the corresponding TinyPNG context menu entry.
 
 ![Context menu for a complete folder](images/compress-folder.png)
+A progress notification will show the current status during compression.
+
+### Compression of staged images
+
+Run `TinyPNG: Compress images in git stage` from the command palette to compress all staged images. A progress notification shows the current status.
 
 ## Requirements
 

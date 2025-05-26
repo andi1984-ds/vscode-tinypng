@@ -18,7 +18,8 @@
     "activationEvents": [
         "onCommand:extension.compressFile",
         "onCommand:extension.compressFolder",
-        "onCommand:extension.getCompressionCount"
+        "onCommand:extension.getCompressionCount",
+        "onCommand:extension.compressGitStage"
     ],
     "main": "./out/extension.js",
     "contributes": {
