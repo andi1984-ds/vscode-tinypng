@@ -10,24 +10,19 @@ import { ExtensionContext, Disposable, Uri } from 'vscode';
  * Function to compress a single image.
  * @param {Object} file
  */
-const compressImage = (file: Uri) => {
+
+const compressImage = async (file: Uri) => {
     const shouldOverwrite: boolean =
         vscode.workspace
             .getConfiguration('tinypng')
             .get<boolean>('forceOverwrite') || false;
 
-    // Note: Define the destination file path for the compressed image.
     let destinationFilePath = file.fsPath;
-    // In case the extension should not overwrite the source file (default)…
     if (!shouldOverwrite) {
-        // …take the postfix defined in the settings.
         const postfix = vscode.workspace
             .getConfiguration('tinypng')
             .get<string>('compressedFilePostfix');
-
         const parsedPath = path.parse(file.fsPath);
-
-        // Generate file in format: <name><postfix>.<ext>
         destinationFilePath = path.join(
             parsedPath.dir,
             `${parsedPath.name}${postfix}${parsedPath.ext}`
@@ -39,52 +34,46 @@ const compressImage = (file: Uri) => {
     );
     statusBarItem.text = `Compressing file ${file.fsPath}...`;
     statusBarItem.show();
-    return tinify.fromFile(file.fsPath).toFile(destinationFilePath, (error) => {
+    try {
+        await tinify.fromFile(file.fsPath).toFile(destinationFilePath);
         statusBarItem.hide();
-        if (error) {
-            if (error instanceof tinify.AccountError) {
-                // Verify your API key and account limit.
-                console.error(
-                    'Authentication failed. Have you set the API Key?'
-                );
-                vscode.window.showErrorMessage(
-                    'Authentication failed. Have you set the API Key?'
-                );
-            } else if (error instanceof tinify.ClientError) {
-                // Check your source image and request options.
-                console.error(
-                    'Ooops, there is an error. Please check your source image and settings.'
-                );
-                vscode.window.showErrorMessage(
-                    'Ooops, there is an error. Please check your source image and settings.'
-                );
-            } else if (error instanceof tinify.ServerError) {
-                // Temporary issue with the Tinify API.
-                console.error('TinyPNG API is currently not available.');
-                vscode.window.showErrorMessage(
-                    'TinyPNG API is currently not available.'
-                );
-            } else if (error instanceof tinify.ConnectionError) {
-                // A network connection error occurred.
-                console.error(
-                    'Network issue occurred. Please check your internet connectivity.'
-                );
-                vscode.window.showErrorMessage(
-                    'Network issue occurred. Please check your internet connectivity.'
-                );
-            } else {
-                // Something else went wrong, unrelated to the Tinify API.
-                console.error(error.message);
-                vscode.window.showErrorMessage(error.message);
-            }
-        } else {
-            vscode.window.showInformationMessage(
-                `Successfully compressed ${file.fsPath} to ${destinationFilePath}!`
+        vscode.window.showInformationMessage(
+            `Successfully compressed ${file.fsPath} to ${destinationFilePath}!`
+        );
+    } catch (error: any) {
+        statusBarItem.hide();
+        if (error instanceof tinify.AccountError) {
+            console.error(
+                'Authentication failed. Have you set the API Key?'
             );
+            vscode.window.showErrorMessage(
+                'Authentication failed. Have you set the API Key?'
+            );
+        } else if (error instanceof tinify.ClientError) {
+            console.error(
+                'Ooops, there is an error. Please check your source image and settings.'
+            );
+            vscode.window.showErrorMessage(
+                'Ooops, there is an error. Please check your source image and settings.'
+            );
+        } else if (error instanceof tinify.ServerError) {
+            console.error('TinyPNG API is currently not available.');
+            vscode.window.showErrorMessage(
+                'TinyPNG API is currently not available.'
+            );
+        } else if (error instanceof tinify.ConnectionError) {
+            console.error(
+                'Network issue occurred. Please check your internet connectivity.'
+            );
+            vscode.window.showErrorMessage(
+                'Network issue occurred. Please check your internet connectivity.'
+            );
+        } else {
+            console.error(error.message);
+            vscode.window.showErrorMessage(error.message);
         }
-    });
+    }
 };
-
 /**
  * Validate the user.
  * @param {function} onSuccess - Function to call on success
@@ -104,7 +93,7 @@ const validate = (
 
 const afterValidation = (callback: Function) => validate(callback);
 
-const compressStageFiles = (editorPath: string) => {
+const compressStageFiles = async (editorPath: string) => {
     try {
         const lines = spawnSync('git', ['diff', '--staged', '--diff-filter=ACMR', '--name-only', '-z'], { encoding: 'utf-8', cwd: editorPath })
         const files = lines.stdout
@@ -117,7 +106,18 @@ const compressStageFiles = (editorPath: string) => {
             )
             return
         }
-        files.forEach(f => compressImage(Uri.parse(`${editorPath}/${f}`)))
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `TinyPNG: Compressing ${files.length} staged image(s)`,
+            cancellable: false
+        }, async (progress) => {
+            let completed = 0;
+            for (const f of files) {
+                await compressImage(Uri.parse(`${editorPath}/${f}`));
+                completed++;
+                progress.report({ increment: 100 / files.length, message: `${completed}/${files.length}` });
+            }
+        });
     } catch(err) {
         vscode.window.showErrorMessage(
             `TinyPNG: ${(err as Error).message}`
@@ -157,15 +157,34 @@ function activate(context: ExtensionContext) {
 
     let disposableCompressFolder: Disposable = vscode.commands.registerCommand(
         'extension.compressFolder',
-        function (folder: Uri) {
-            vscode.workspace
-                .findFiles(
-                    new vscode.RelativePattern(
-                        folder.path,
-                        `**/*.{png,jpg,jpeg,webp}`
-                    )
-                )
-                .then((files: any) => files.forEach(compressImage));
+        async function (folder: Uri) {
+            const files = await vscode.workspace.findFiles(
+                new vscode.RelativePattern(folder.path, `**/*.{png,jpg,jpeg,webp}`)
+            );
+            if (files.length === 0) {
+                vscode.window.showInformationMessage(
+                    'TinyPNG: No images found in this folder.'
+                );
+                return;
+            }
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: `TinyPNG: Compressing ${files.length} image(s)`,
+                    cancellable: false,
+                },
+                async (progress) => {
+                    let completed = 0;
+                    for (const file of files) {
+                        await compressImage(file);
+                        completed++;
+                        progress.report({
+                            increment: 100 / files.length,
+                            message: `${completed}/${files.length}`,
+                        });
+                    }
+                }
+            );
         }
     );
 
@@ -182,7 +201,7 @@ function activate(context: ExtensionContext) {
     context.subscriptions.push(disposableCompressionCount);
 
     let disposableCompressGitStage: Disposable =
-        vscode.commands.registerCommand('extension.compressGitStage', () => {
+        vscode.commands.registerCommand('extension.compressGitStage', async () => {
             const folders = vscode.workspace.workspaceFolders
             if (!folders) {
                 vscode.window.showInformationMessage(
@@ -191,16 +210,15 @@ function activate(context: ExtensionContext) {
                 return
             }
             if (folders.length <= 1) {
-                compressStageFiles(folders[0].uri.fsPath)
+                await compressStageFiles(folders[0].uri.fsPath)
                 return
             }
             const folderNames = folders.map(folder => folder.name)
-            vscode.window.showQuickPick(folderNames).then((folderName) => {
-                const folder = folders.find(folder => folder.name === folderName)
-                if (folder) {
-                    compressStageFiles(folder.uri.fsPath)
-                }
-            })
+            const folderName = await vscode.window.showQuickPick(folderNames)
+            const folder = folders.find(folder => folder.name === folderName)
+            if (folder) {
+                await compressStageFiles(folder.uri.fsPath)
+            }
         });
 
     context.subscriptions.push(disposableCompressGitStage)
