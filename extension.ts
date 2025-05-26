@@ -117,7 +117,9 @@ const compressStageFiles = (editorPath: string) => {
             )
             return
         }
-        files.forEach(f => compressImage(Uri.parse(`${editorPath}/${f}`)))
+        files.forEach(f =>
+            compressImage(Uri.file(path.join(editorPath, f)))
+        )
     } catch(err) {
         vscode.window.showErrorMessage(
             `TinyPNG: ${(err as Error).message}`
